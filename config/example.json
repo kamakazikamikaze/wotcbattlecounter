@@ -1,0 +1,41 @@
+{
+  "debug": false,
+  "processes": 12,
+  "ps4": {
+    "max account": 1080500000,
+    "start account": 1073740000
+  },
+  "xbox": {
+    "max account": 13325000,
+    "start account": 5000
+  },
+  "database": {
+    "password": "password",
+    "protocol": "mysql",
+    "user": "root",
+    "name": "battletracker",
+    "address": "localhost"
+  },
+  "logging": {
+    "errors": "logs/error-%Y_%m_%d"
+  },
+  "elasticsearch": {
+    "clusters": {
+      "<cluster1>": {
+        "sniff_on_start": true,
+        "hosts": [],
+        "sniffer_timeout": 30,
+        "sniff_on_connection_fail": true
+      }
+    },
+    "offload": {
+      "index": "./dumps/index.txt",
+      "delete old index on reload": true,
+      "data folder": "./dumps/data"
+    }
+  },
+  "application_id": "demo",
+  "language": "en",
+  "timeout": 15,
+  "max retries": 5
+}
