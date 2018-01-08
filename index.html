@@ -1,1 +1,178 @@
+<html>
+<head>
+	<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+</head>
+<body>
+	
+	<h1>World of Tanks Console: Battle Counter</h1>
+	<p>
+		<i>"I'd be amazed if you could pull this off" — WoT Console Forum User</i>
+	</p>
+	<br>
+	
 
+	<h2>What is this project?</h2>
+	<p>The World of Tanks Console: Battle Counter was a proof-of-concept that
+	spawned after I began pulling data from Wargaming's API for per-player
+	statistics. There were questions regarding the health of the playerbase and
+	whether or not we were losing veteran players faster than newbies were
+	being brought in.</p>
+	<p>After being criticized by nay-sayers and staff alike, I grew an ego and
+	sought out to prove that I could indeed gather the evidence to determine
+	whether or not the playerbase was in jeopardy. Using nothing more than my
+	experience from college, student employment, and open-source contributions,
+	I designed an affordable, dependable method of gathering and publicly
+	hosting the data.</p>
+
+	<br>
+	
+
+	<h2>The Design</h2>
+
+	<h4>Querying</h4>
+	<p>Wargaming offers two types of Application Access: client, designed for
+	client device to query the API; and server, where dedicated hardware from a
+	static IP would send requests. The former is limited to 10 requests per
+	second per IP, whereas the latter is limited to 20. General player
+	information can be requested from https://api-ps4-console.worldoftanks.com/wotx/account/info/
+	with a limit of 100 players per request. This allows us to pull 2,000
+	players per second. With over 17,000,000 accounts, it would take a minimum
+	of 2.36 hours to query all information (disregarding latency).</p>
+	<p>Accessing this much data would require dedicated hardware to ensure that
+	we complete our runs as soon as possible. Since we would use Python and
+	have limitations of the GIL, it made sense to use the multiprocessing
+	package and have at least twenty processes set up as query workers. If we
+	wanted to have peak performance, we would have another group of workers
+	interact with the database, preventing the query workers from being blocked
+	by waiting for SQL I/O to complete. (This was not fully implemented as my
+	server hosted the query script and MySQL server, meaning cores and RAM were
+	shared.)</p>
+
+	<h4>Hosting</h4>
+	<p>I wanted to learn more about AWS. Much of the modern world is moving
+	towards cloud computing, and I saw an opportunity to add a project to my
+	resumé. I decided that a <b>c4.xlarge</b> was a good balance between
+	compute units (CU), processor cores, memory, and costs. (c5 has become
+	available since the timing of this writing, and pricing is more favorable
+	for the increased performance.) At $0.20/hr with a projected 3 hours per
+	day, the average month would cost $18 in On-Demand EC2 instance charges.
+	Not bad when compared to VPS or Web-hosting services!</p>
+
+	<h4>Execution</h4>
+	<p>To keep costs down, I wanted to be able to spin up an instance
+	temporarily and shut it down once complete.
+	<a href="https://aws.amazon.com/premiumsupport/knowledge-center/start-stop-lambda-cloudwatch/">
+	AWS Lambda offered a method</a> in which users can schedule the
+	intialization of servers. This meant I wouldn't have to pay for time that
+	my query script wasn't being run. We could launch the instance three minutes
+	before midnight UTC, have a linux cron job set up on the instance to run at
+	midnight, and chain the command to initiate a shutdown when done. It was
+	simple and effective.</p>
+
+	<h4>SQL and Storage</h4>
+	<p>While SQLite is easy to use, we wanted to take advantage of
+	multiprocessing when querying data. SQLite cannot handle multiple locks on
+	the database, but thankfully MySQL's syntax is similar with a few more
+	features that we would want to use.</p>
+	<p>One design limitation was the separation of data being tracked daily. We
+	needed to be able to "snapshot" how many players were online at any given
+	day, all while making it easier to search. We also needed to list all known
+	players so that we can review when accounts were made. As such, I decided
+	to create one "static" table (the Players) and two "dynamic"/template tables
+	that tracked total battles and the difference in battles. In other words,
+	one would record the player's total battle count and the other would have
+	how many they participated in <i>for just that 24-hour span</i>, reducing
+	the calculations needed for either view.</p>
+	<p>Because not all players would be online every day, the Total and Diff
+	tables would be of a much smaller size than that of the Players. Initially
+	I was able to store everything on less than 10GB of disk space, though by
+	January 2018 I would not recommend less than 16GB due to seasonal/temporary
+	player registration. Raw SQL size was ~2.3GB for four months of data, with
+	full MySQL storage using at least 7GB. The AWS charges for storage were
+	minimal thanks to this, bringing total monthly charges to under $35.</p>
+	<p>To minimize calculations by the query script, I created triggers in the
+	database to handle new players being added or when existing players had
+	information updated. New players would be INSERTed into the Players table
+	and the Total table for that day. Existing players would be UPDATEd and
+	INSERTed into the Total and Diff table for that day. The trigger eliminated
+	the need to query the player, and our script would simply update the name
+	of the Total and Diff tables in the trigger each day before executing.</p>
+
+	<h4>Searches</h4>
+	<p>The hardest part of the project was deciding on how to make the data
+	searchable. As I was not a master in SQL (all self-taught), I was not sure
+	that I could come up with an efficient way of viewing the data without
+	inefficient queries. I had contemplated using DynamoDB to host everything,
+	however the performance I saw was not very promising. I instead decided to
+	set up an <a href="http://up-shop.org">UP board</a> at home with Elasticsearch
+	and Kibana on it. I could mimic the daily tables by creating time-based
+	indices. I could set up a way to offload data to disk if the server wasn't
+	available, then reload it and attempt to resend to ensure that everything
+	made it over. This would ease concerns about data lost in transit or in
+	case my home network were to go down.</p>
+
+	<br>
+
+
+	<h2>How do I get started?</h2>
+
+	<h4>Register for an Application ID</h4>
+	<p>Before you can begin mining Wargaming's API, you must register for an
+	account.
+	<a href="https://developers.wargaming.net">Access their developer page.</a>
+	Create a server application, naming it whatever you wish.</p> 
+
+	<h4>AWS EC2</h4>
+	<p>First, you must create an EC2 instance. I went for the generic Amazon
+	Linux AMI (amzn-ami-hvm-2017.03.1.20170812-x86_64-gp2 (ami-aa5ebdd2)). This
+	image requires very little to set up, has support for MySQL 5.6+ packages,
+	can load Python, and doesn't require much storage. Set it up with at least
+	12 GB of EBS storage (GP2). You may select the c5.xlarge or other size as
+	desired. Attach an ElasticIP.</p>
+
+	<p>Once launched, update all system packages, clone my git project,
+	register the IP for your Wargaming Application, and then review the
+	available Python version. If Pip is not installed, get it. Check for
+	Virtualenv and install it if missing. (You should ALWAYS use virtualenv!)
+	Create a new virtualenv and install the list from my included
+	<a href="https://raw.githubusercontent.com/kamakazikamikaze/wotcbattlecounter/gh-pages/requirements.txt">requirements.txt</a>
+	file.</p>
+
+	<p>Open cron (<b>crontab -e</b>) and enter the following:</p>
+	<p><b>0 0 * * * source /home/[user]/.virtualenvs/[virtualenv]/bin/activate &amp;&amp; cd /[path]/[to]/[project]/ &amp;&amp; python src/collect.py config/example.json &amp;&amp; sudo shutdown -h now</b></p>
+	<p>For example, if I saved my code to <i>/home/ec2-user/workspace/wotcbattlecounter</i> and created a virtualenv named <i>wargaming</i>:</p>
+	<p><b>0 0 * * * source /home/ec2-user/.virtualenvs/wargaming/bin/activate &amp;&amp; cd /home/ec2-user/workspace/wotcbattlecounter &amp;&amp; python src/collect.py config/counter.json &amp;&amp; sudo shutdown -h now</b></p>
+
+	<p>(<i>Note: my ec2-user account did not have a password. If you have user
+	accounts with passwords, you may need to come up with an alternative solution
+	for shutting down the instance when complete.</i>)</p>
+
+	<p>You may also add a line for mailing the output to you when done.</p>
+	<p><b>MAILTO:[you@yourdomain.com]</b></p>
+
+	<p>If you are not going to run your script within the hour, <i>shut down
+	the instance to save money.</i> You are charged a full hour for uptime,
+	even when it's not calculating anything!</p>
+
+	<h4>AWS Lambda</h4>
+	<p>Amazon has published a better document on how to use Lambda for launching
+	instances. You may find it <a href="https://aws.amazon.com/premiumsupport/knowledge-center/start-stop-lambda-cloudwatch/">here.</a></p>
+
+	<h4>Elasticsearch and Kibana</h4>
+	<p>This is optional but makes searches much easier and interactive. Set up
+	Elasticsearch on your choice of a service, firewall access to the API, then
+	whitelist the IP of your Elasticsearch instance and IP of your Kibana
+	server (if on separate machines). Use the
+	<a href="https://raw.githubusercontent.com/kamakazikamikaze/wotcbattlecounter/gh-pages/templates/index%20templates.txt">index templates</a>
+	to allow for auto-creation of indices for Total and Diff battles. Set up
+	Kibana (or another service such as Graylog) and lock down access to developer
+	tools to prevent accidental tinkering by the public.</p>
+
+	<br>
+
+	<h2>My results</h2>
+
+	<h4>Coming soon!</h4>
+
+</body>
+</html>
