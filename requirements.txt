@@ -4,5 +4,5 @@ elasticsearch>=1.6.0
 idna==2.6
 requests==2.18.4
 SQLAlchemy==1.2.0
-urllib3==1.22
+urllib3==1.26.5
 wotconsole==0.4
